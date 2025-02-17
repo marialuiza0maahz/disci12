@@ -1,0 +1,340 @@
+import 'package:flutter/material.dart';
+import 'package:sqflite/sqflite.dart';
+import 'package:path/path.dart';
+
+// Modelo de Planeta
+class Planeta {
+  int? id;
+  String nome;
+  double distanciaSol;
+  double tamanho;
+  String? apelido;
+
+  Planeta({
+    this.id,
+    required this.nome,
+    required this.distanciaSol,
+    required this.tamanho,
+    this.apelido,
+  });
+
+  // Convertendo de e para o formato de banco de dados
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'nome': nome,
+      'distanciaSol': distanciaSol,
+      'tamanho': tamanho,
+      'apelido': apelido,
+    };
+  }
+
+  factory Planeta.fromMap(Map<String, dynamic> map) {
+    return Planeta(
+      id: map['id'],
+      nome: map['nome'],
+      distanciaSol: map['distanciaSol'],
+      tamanho: map['tamanho'],
+      apelido: map['apelido'],
+    );
+  }
+}
+
+// Banco de dados SQLite
+class DatabaseHelper {
+  static final DatabaseHelper instance = DatabaseHelper._init();
+
+  static Database? _database;
+
+  DatabaseHelper._init();
+
+  Future<Database> get database async {
+    if (_database != null) return _database!;
+    _database = await _initDB('planetas.db');
+    return _database!;
+  }
+
+  Future<Database> _initDB(String filePath) async {
+    final dbPath = await getDatabasesPath();
+    final path = join(dbPath, filePath);
+    return openDatabase(path, version: 1, onCreate: _createDB);
+  }
+
+  Future _createDB(Database db, int version) async {
+    await db.execute('''
+      CREATE TABLE planetas(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nome TEXT,
+        distanciaSol REAL,
+        tamanho REAL,
+        apelido TEXT
+      )
+    ''');
+  }
+
+  Future<int> addPlaneta(Planeta planeta) async {
+    final db = await instance.database;
+    return await db.insert('planetas', planeta.toMap());
+  }
+
+  Future<List<Planeta>> getAllPlanetas() async {
+    final db = await instance.database;
+    final maps = await db.query('planetas');
+
+    return List.generate(maps.length, (i) {
+      return Planeta.fromMap(maps[i]);
+    });
+  }
+
+  Future<int> updatePlaneta(Planeta planeta) async {
+    final db = await instance.database;
+    return await db.update(
+      'planetas',
+      planeta.toMap(),
+      where: 'id = ?',
+      whereArgs: [planeta.id],
+    );
+  }
+
+  Future<int> deletePlaneta(int id) async {
+    final db = await instance.database;
+    return await db.delete(
+      'planetas',
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+}
+
+// Tela de cadastro e edição de planeta
+class PlanetaFormPage extends StatefulWidget {
+  final Planeta? planeta;
+
+  PlanetaFormPage({this.planeta});
+
+  @override
+  _PlanetaFormPageState createState() => _PlanetaFormPageState();
+}
+
+class _PlanetaFormPageState extends State<PlanetaFormPage> {
+  final _formKey = GlobalKey<FormState>();
+  late String nome, apelido;
+  late double distanciaSol, tamanho;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.planeta != null) {
+      nome = widget.planeta!.nome;
+      apelido = widget.planeta!.apelido ?? '';
+      distanciaSol = widget.planeta!.distanciaSol;
+      tamanho = widget.planeta!.tamanho;
+    } else {
+      nome = '';
+      apelido = '';
+      distanciaSol = 0;
+      tamanho = 0;
+    }
+  }
+
+  void _savePlaneta() async {
+    if (_formKey.currentState!.validate()) {
+      _formKey.currentState!.save();
+      Planeta planeta = Planeta(
+        id: widget.planeta?.id,
+        nome: nome,
+        apelido: apelido.isNotEmpty ? apelido : null,
+        distanciaSol: distanciaSol,
+        tamanho: tamanho,
+      );
+      bool sucesso = false;
+      if (widget.planeta == null) {
+        sucesso = await DatabaseHelper.instance.addPlaneta(planeta) > 0;
+      } else {
+        sucesso = await DatabaseHelper.instance.updatePlaneta(planeta) > 0;
+      }
+      if (sucesso) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(widget.planeta == null ? 'Planeta cadastrado com sucesso!' : 'Planeta atualizado com sucesso!')),
+        );
+        Navigator.pop(context, true);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erro ao salvar planeta!')),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(widget.planeta == null ? 'Adicionar Planeta' : 'Editar Planeta')),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            children: [
+              TextFormField(
+                initialValue: nome,
+                decoration: InputDecoration(labelText: 'Nome do Planeta'),
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return 'O nome é obrigatório';
+                  }
+                  return null;
+                },
+                onSaved: (value) => nome = value!,
+              ),
+              TextFormField(
+                initialValue: apelido,
+                decoration: InputDecoration(labelText: 'Apelido (opcional)'),
+                onSaved: (value) => apelido = value!,
+              ),
+              TextFormField(
+                initialValue: distanciaSol.toString(),
+                decoration: InputDecoration(labelText: 'Distância do Sol (UA)'),
+                keyboardType: TextInputType.number,
+                validator: (value) {
+                  if (value == null || value.isEmpty || double.tryParse(value) == null || double.parse(value) <= 0) {
+                    return 'A distância do sol deve ser um número positivo';
+                  }
+                  return null;
+                },
+                onSaved: (value) => distanciaSol = double.parse(value!),
+              ),
+              TextFormField(
+                initialValue: tamanho.toString(),
+                decoration: InputDecoration(labelText: 'Tamanho (km)'),
+                keyboardType: TextInputType.number,
+                validator: (value) {
+                  if (value == null || value.isEmpty || double.tryParse(value) == null || double.parse(value) <= 0) {
+                    return 'O tamanho deve ser um número positivo';
+                  }
+                  return null;
+                },
+                onSaved: (value) => tamanho = double.parse(value!),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 16.0),
+                child: ElevatedButton(
+                  onPressed: _savePlaneta,
+                  child: Text(widget.planeta == null ? 'Cadastrar' : 'Atualizar'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// Tela inicial com lista de planetas
+class HomePage extends StatefulWidget {
+  @override
+  _HomePageState createState() => _HomePageState();
+}
+
+class _HomePageState extends State<HomePage> {
+  late Future<List<Planeta>> planetas;
+
+  @override
+  void initState() {
+    super.initState();
+    planetas = DatabaseHelper.instance.getAllPlanetas();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text('Planetas')),
+      body: FutureBuilder<List<Planeta>>(
+        future: planetas,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return Center(child: CircularProgressIndicator());
+          }
+          if (snapshot.hasError) {
+            return Center(child: Text('Erro ao carregar planetas'));
+          }
+          if (!snapshot.hasData || snapshot.data!.isEmpty) {
+            return Center(child: Text('Nenhum planeta cadastrado.'));
+          }
+
+          final listaPlanetas = snapshot.data!;
+
+          return ListView.builder(
+            itemCount: listaPlanetas.length,
+            itemBuilder: (context, index) {
+              final planeta = listaPlanetas[index];
+              return ListTile(
+                title: Text(planeta.nome),
+                subtitle: Text(planeta.apelido ?? ''),
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => PlanetaFormPage(planeta: planeta),
+                  ),
+                ),
+                trailing: IconButton(
+                  icon: Icon(Icons.delete),
+                  onPressed: () async {
+                    bool confirmDelete = await showDialog(
+                      context: context,
+                      builder: (BuildContext context) {
+                        return AlertDialog(
+                          title: Text('Excluir'),
+                          content: Text('Você tem certeza que deseja excluir este planeta?'),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.of(context).pop(false),
+                              child: Text('Cancelar'),
+                            ),
+                            TextButton(
+                              onPressed: () => Navigator.of(context).pop(true),
+                              child: Text('Excluir'),
+                            ),
+                          ],
+                        );
+                      },
+                    ) ?? false;
+                    if (confirmDelete) {
+                      await DatabaseHelper.instance.deletePlaneta(planeta.id!);
+                      setState(() {
+                        planetas = DatabaseHelper.instance.getAllPlanetas();
+                      });
+                    }
+                  },
+                ),
+              );
+            },
+          );
+        },
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () async {
+          bool? result = await Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => PlanetaFormPage()),
+          );
+          if (result ?? false) {
+            setState(() {
+              planetas = DatabaseHelper.instance.getAllPlanetas();
+            });
+          }
+        },
+        child: Icon(Icons.add),
+      ),
+    );
+  }
+}
+
+void main() {
+  runApp(MaterialApp(
+    title: 'CRUD de Planetas',
+    theme: ThemeData(primarySwatch: Colors.blue),
+    home: HomePage(),
+  ));
+}
